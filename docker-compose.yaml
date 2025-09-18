@@ -1,0 +1,22 @@
+services:
+  unifi-alerts:
+    build:
+      context: /volume1/unifi-ai
+    container_name: unifi-alerts
+    env_file:
+      - /volume1/unifi-ai/.env
+    volumes:
+      - /volume1/unifi-ai/id_to_name.json:/app/id_to_name.json:ro
+      - /volume1/unifi-ai/logs:/app/logs
+    ports:
+      - "18080:8080"        # external:internal; keep 18080 free on DSM
+    restart: always
+    # good hygiene
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"] 
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
