@@ -1,0 +1,60 @@
+# --- Python / FastAPI ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.dist-info/
+.build/
+build/
+dist/
+.eggs/
+.pytype/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Virtual envs ---
+venv/
+.venv/
+env/
+ENV/
+pip-wheel-metadata/
+
+# --- Editors / OS junk ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Synology / NAS metadata ---
+@eaDir/
+# sometimes Synology creates thumbnail dirs
+.@__thumb/
+
+# --- Docker / runtime outputs ---
+# keep Dockerfile and compose; ignore local artifacts/logs
+**/logs/
+logs/
+**/clips/
+clips/
+*.log
+
+# --- Secrets & local config ---
+# keep example files tracked
+.env
+.env.* 
+!.env.example
+*.env
+*.env.*
+!*.example
+
+# camera ID maps and local overrides (track the examp
