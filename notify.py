@@ -1,4 +1,4 @@
-# notify.py — Pushover with optional image attachment yes
+# notify.py — Pushover with optional image attachment
 import os
 import httpx
 
