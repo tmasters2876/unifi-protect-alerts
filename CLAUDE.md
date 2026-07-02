@@ -33,11 +33,16 @@ unifi-protect-alerts/
 ├── vision.py            # OpenAI Vision wrapper
 ├── notify.py            # Pushover notification sender
 ├── pyproject.toml       # Dependencies and build config
-├── Dockerfile           # python:3.11-slim, installs package, runs uvicorn
-├── docker-compose.yaml  # Synology NAS deployment (port 18080→8080)
+├── Dockerfile           # python:3.11-slim, installs package, runs uvicorn (flat-file layout)
+├── .dockerignore        # Excludes venvs, Archive/, scripts/, tests/, .env from the image
+├── docker-compose.yaml  # Synology NAS deployment (port 18080→8080), mounts ./logs
 ├── id_to_name.json      # Optional manual camera id→name override map
 ├── mac_to_name.json     # Optional MAC→name override map
+├── probe_integration.py # One-off debug probe (reads .env, no hardcoded secrets)
+├── scripts/
+│   └── probe_unvr.py    # Stdlib-only camera discovery probe; writes id_to_name.json/mac_to_name.json
 ├── Archive/             # Old versions of main.py (not active)
+├── logs/                # RotatingFileHandler output (gitignored, mounted on NAS)
 └── .env                 # Local secrets (never commit)
 ```
 
@@ -64,7 +69,7 @@ source .venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-Note: The Dockerfile references `app.main:app` (an `app/` package layout) but the flat-file layout in the repo uses `main:app` directly. Use `main:app` when running outside Docker.
+The Dockerfile now matches this flat-file layout (`uvicorn main:app`, `COPY . .` filtered by `.dockerignore`).
 
 ---
 

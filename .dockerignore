@@ -1,0 +1,14 @@
+.venv/
+venv/
+.git/
+Archive/
+path/
+scripts/
+tests/
+__pycache__/
+*.pyc
+.env
+logs/
+.pytest_cache/
+.DS_Store
+.vscode/

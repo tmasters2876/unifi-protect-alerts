@@ -26,7 +26,7 @@ cp .env.example .env
 python -m venv .venv && source .venv/bin/activate
 pip install -U pip
 pip install -e .
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
 ### 3) Expose & configure UniFi Protect

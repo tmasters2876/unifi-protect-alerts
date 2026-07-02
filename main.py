@@ -3,6 +3,7 @@ import os, base64, time, asyncio
 import re as _re2
 import httpx
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -28,6 +29,16 @@ PROTECT_HOST = (os.environ.get("PROTECT_HOST") or "").rstrip("/")
 IKEY = os.environ.get("PROTECT_INTEGRATION_KEY") or ""
 BTOKEN = os.environ.get("PROTECT_API_KEY") or ""  # optional; not required here
 LOG = logging.getLogger("uvicorn.error")
+
+# Persist logs to disk (docker-compose mounts ./logs on the NAS) in addition to stdout.
+_LOG_DIR = Path(__file__).resolve().parent / "logs"
+try:
+    _LOG_DIR.mkdir(exist_ok=True)
+    _file_handler = RotatingFileHandler(_LOG_DIR / "app.log", maxBytes=5_000_000, backupCount=3)
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    LOG.addHandler(_file_handler)
+except OSError as e:
+    LOG.warning(f"[LOGGING] could not set up file logging: {e}")
 
 # Behavior flags
 SMART_DETECT_ONLY = os.environ.get("SMART_DETECT_ONLY", "false").strip().lower() in ("1","true","yes","y")

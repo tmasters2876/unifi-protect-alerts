@@ -5,9 +5,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # --- tiny .env loader (no external deps) ---
 def load_dotenv_simple():
-    env_path = Path(__file__).resolve().parent / ".env"
+    env_path = PROJECT_ROOT / ".env"
     if env_path.exists():
         for raw in env_path.read_text().splitlines():
             line = raw.strip()
@@ -148,8 +150,8 @@ def main():
     else:
         print("\n(no camera id available to test snapshot)")
 
-    Path("id_to_name.json").write_text(json.dumps(id_to_name, indent=2))
-    Path("mac_to_name.json").write_text(json.dumps(mac_to_name, indent=2))
+    (PROJECT_ROOT / "id_to_name.json").write_text(json.dumps(id_to_name, indent=2))
+    (PROJECT_ROOT / "mac_to_name.json").write_text(json.dumps(mac_to_name, indent=2))
     print("\nWrote id_to_name.json and mac_to_name.json")
 
 if __name__ == "__main__":
