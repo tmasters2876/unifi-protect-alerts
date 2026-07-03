@@ -13,7 +13,7 @@ Copy `.env.example` to `.env` and fill values:
 cp .env.example .env
 ```
 
-- `OPENAI_API_KEY`: OpenAI API key (Vision capable model like `gpt-4o-mini`).
+- `OPENAI_API_KEY`: OpenAI API key (Vision capable model; this project uses `gpt-4o` with structured JSON output).
 - `PROTECT_HOST`: e.g., `https://udm-se.local` or `https://unvr.local` (must be reachable from the server).
 - `PROTECT_API_KEY`: UniFi OS API token (preferred), or set `PROTECT_USERNAME`/`PROTECT_PASSWORD`.
 - `PUSHOVER_USER_KEY`, `PUSHOVER_APP_TOKEN`: optional; if omitted, messages are printed to stdout.
@@ -55,4 +55,4 @@ docker run --env-file .env -p 8080:8080 unifi-ai-alerts
 
 - Snapshot fetching uses the UniFi OS proxy path: `/proxy/protect/api/cameras/{id}/snapshot?ts=...&force=true`.
 - If your webhook payload lacks camera id, you can set `DEFAULT_CAMERA_ID` in `.env` or adjust parsing in `main.py`.
-- Costs: use `gpt-4o-mini` for most alerts; escalate to larger models only on “important” classifications.
+- Costs: runs on `gpt-4o` for richer multi-subject/appearance detail; see `vision.py`'s `MODEL` constant if you want to trade detail for cost.

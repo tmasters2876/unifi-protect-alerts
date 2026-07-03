@@ -2,9 +2,9 @@
 
 ## What this project does
 
-FastAPI webhook server that receives UniFi Protect alarm events, fetches a camera snapshot or thumbnail, runs it through OpenAI Vision (`gpt-4o-mini`), and pushes a human-readable Pushover notification with the image attached.
+FastAPI webhook server that receives UniFi Protect alarm events, fetches a camera snapshot or thumbnail, runs it through OpenAI Vision (`gpt-4o`, structured JSON output), and pushes a rich, human-readable Pushover notification with the image attached. Alerts describe every subject in frame at once (e.g. a person *and* an animal together), with per-subject clothing/appearance/weapon detail — not just a single best-guess label.
 
-**Flow:** UniFi Protect Alarm Webhook → `POST /unifi-webhook` → image fetch → OpenAI Vision → Pushover (or stdout if not configured)
+**Flow:** UniFi Protect Alarm Webhook → `POST /unifi-webhook` → image fetch → OpenAI Vision (structured `VisionResult`) → title/message built from structured fields → Pushover (or stdout if not configured)
 
 ---
 
@@ -15,7 +15,7 @@ FastAPI webhook server that receives UniFi Protect alarm events, fetches a camer
 | Language | Python 3.11 |
 | Web framework | FastAPI + Uvicorn |
 | HTTP client | httpx (async) |
-| AI vision | OpenAI API (`gpt-4o-mini`) via raw httpx (no SDK) |
+| AI vision | OpenAI API (`gpt-4o`, strict `response_format: json_schema`) via raw httpx (no SDK) |
 | Notifications | Pushover REST API |
 | Config | python-dotenv, `.env` file |
 | Packaging | setuptools via `pyproject.toml` |
@@ -28,9 +28,10 @@ FastAPI webhook server that receives UniFi Protect alarm events, fetches a camer
 
 ```
 unifi-protect-alerts/
-├── main.py              # FastAPI app, all webhook logic, label helpers
+├── main.py              # FastAPI app, webhook route, payload-parsing helpers, notify glue
+├── labeling.py          # Turns a structured VisionResult into an alert title (no regex)
 ├── unifi.py             # UniFi Protect API client (Integration + Classic)
-├── vision.py            # OpenAI Vision wrapper
+├── vision.py            # OpenAI Vision wrapper — Subject/VisionResult schema, gpt-4o structured output
 ├── notify.py            # Pushover notification sender
 ├── pyproject.toml       # Dependencies and build config
 ├── Dockerfile           # python:3.11-slim, installs package, runs uvicorn (flat-file layout)
@@ -131,8 +132,10 @@ docker run --env-file .env -p 8080:8080 unifi-ai-alerts
 - **Image priority**: data URL in payload → URL thumbnail in payload → snapshot API fallback
 - **Auth fallback chain**: unauthenticated → `X-API-KEY` (integration key) → `Bearer` token
 - **Camera ID resolution**: 24-hex integration IDs preferred; MAC addresses resolved via camera map; ID→name cache refreshes every 60s
-- **Label logic**: UniFi `smartDetectTypes` take priority over AI inference; `SMART_DETECT_ONLY=true` skips AI labeling entirely
-- **Escalation triggers**: `fire_protect_trigger()` POSTs to a Protect Alarm Manager "Trigger Link" URL with debounce
+- **Vision output is structured, not prose-parsed**: `vision.analyze_image()` returns a `VisionResult` (`subjects: list[Subject]`, `notification_message`, `weapon_detected`, `threat_level`, `primary_subject_type`) via OpenAI strict JSON-schema output — no keyword/regex guessing of gender/species/weapon from free text.
+- **Label logic**: UniFi `smartDetectTypes` take priority over AI inference (`labeling.primary_kind`); `SMART_DETECT_ONLY=true` returns `"none"` (generic "Alert" title) when no UniFi smart type matched, skipping the AI's own `primary_subject_type` guess
+- **Multi-subject alerts**: the model returns one `Subject` per person/animal/vehicle/package in frame; `notification_message` is composed by the model itself as one combined sentence (e.g. "An Asian male and a raccoon are at the front door...") — `main.py` doesn't stitch subjects together
+- **Escalation triggers**: `fire_protect_trigger()` POSTs to a Protect Alarm Manager "Trigger Link" URL with debounce; weapon/raccoon checks key off `VisionResult.weapon_detected`/`Subject.species` directly
 - **`Archive/`**: historical versions of `main.py` — not imported, safe to ignore
 - All modules are flat files (no package structure) — import as `from unifi import ...`
 - The `ruff` linter is available as a dev dep: `ruff check .` / `ruff format .`

@@ -1,6 +1,5 @@
 # main.py
 import os, base64, time, asyncio
-import re as _re2
 import httpx
 import logging
 from logging.handlers import RotatingFileHandler
@@ -19,8 +18,19 @@ from urllib.parse import urlparse, parse_qs
 import re as _re
 
 from unifi import get_snapshot_by_ts, UnifiAuthError, get_camera_map, fire_protect_trigger
-from vision import analyze_image
+from vision import analyze_image, VisionResult
 from notify import send_alert, notify_available
+from labeling import (
+    primary_kind,
+    build_title,
+    clean_message,
+    SMART_DETECT_ONLY,
+    ANIMAL_SPECIES_FROM_SUMMARY,
+    TITLE_ADD_PERSON_GENDER,
+    TITLE_ADD_VEHICLE_TYPE,
+    TITLE_ADD_VEHICLE_MAKE_MODEL,
+    WEAPON_TITLE_HINT,
+)
 
 VERIFY_TLS = os.environ.get("VERIFY_TLS", "true").lower() == "true"
 SHARED_SECRET = os.environ.get("ALERT_SHARED_SECRET", "")
@@ -40,13 +50,7 @@ try:
 except OSError as e:
     LOG.warning(f"[LOGGING] could not set up file logging: {e}")
 
-# Behavior flags
-SMART_DETECT_ONLY = os.environ.get("SMART_DETECT_ONLY", "false").strip().lower() in ("1","true","yes","y")
-ANIMAL_SPECIES_FROM_SUMMARY = os.environ.get("ANIMAL_SPECIES_FROM_SUMMARY","true").strip().lower() in ("1","true","yes","y")
-TITLE_ADD_PERSON_GENDER = os.environ.get("TITLE_ADD_PERSON_GENDER","true").strip().lower() in ("1","true","yes","y")
-TITLE_ADD_VEHICLE_TYPE = os.environ.get("TITLE_ADD_VEHICLE_TYPE","true").strip().lower() in ("1","true","yes","y")
-TITLE_ADD_VEHICLE_MAKE_MODEL = os.environ.get("TITLE_ADD_VEHICLE_MAKE_MODEL","false").strip().lower() in ("1","true","yes","y")
-WEAPON_TITLE_HINT = os.environ.get("WEAPON_TITLE_HINT", "true").strip().lower() in ("1","true","yes","y")
+# Behavior flags (label/title flags now live in labeling.py, single source of truth)
 TRIGGER_WEAPON   = os.environ.get("PROTECT_TRIGGER_WEAPON", "")
 TRIGGER_RACCOON  = os.environ.get("PROTECT_TRIGGER_RACCOON", "")
 ESCALATION_DEBOUNCE_SEC = int(os.environ.get("ESCALATION_DEBOUNCE_SEC", "60"))
@@ -337,71 +341,7 @@ def _extract_smart_types(payload: Dict[str, Any]) -> Set[str]:
             collect(o)
     return types
 
-_PERSON_WORDS = ("person","someone","individual","visitor","man","woman","boy","girl","male","female")
-_VEH_WORDS    = ("vehicle","car","truck","suv","van","jeep","motorcycle","bike","bicycle","pickup")
-_PKG_WORDS    = ("package","parcel","box","delivery")
-_ANIM_WORDS   = ("animal","raccoon","cat","dog","fox","deer","bear","coyote","squirrel","bird","opossum","skunk","donkey","horse","cow","boar","hog")
-
-def _has_any(s: str, words: tuple[str, ...]) -> bool:
-    s = s.lower()
-    return any(w in s for w in words)
-
-def _suppress_absence_sentences(summary: str) -> str:
-    """Remove 'no X …' clauses/sentences when we already have a positive subject,
-    and tidy dangling conjunctions like a trailing 'with'."""
-    if not summary:
-        return summary
-
-    s = summary.strip()
-
-    # Did we describe something positive?
-    has_person  = _has_any(s, _PERSON_WORDS)
-    has_vehicle = _has_any(s, _VEH_WORDS)
-    has_pkg     = _has_any(s, _PKG_WORDS)
-    has_animal  = _has_any(s, _ANIM_WORDS)
-    has_positive = has_person or has_vehicle or has_pkg or has_animal
-
-    parts = _re2.split(r'(?<=[.!?])\s+', s)
-
-    def is_absence_sentence(sent: str) -> bool:
-        low = sent.strip().lower()
-        # Treat any sentence that *starts* with "No ..." as an absence sentence
-        # (e.g., "No vehicles are visible.", "No weapons present.")
-        return low.startswith("no ")
-
-    # Drop absence-only sentences if we already said something positive
-    if has_positive:
-        parts = [p for p in parts if not is_absence_sentence(p)]
-
-    out = " ".join(p.strip() for p in parts if p.strip())
-
-    if has_positive:
-        # Remove inline trailing absence clauses at the end of a sentence:
-        # ", no X visible/present." or "with no X visible/present."
-        out = _re2.sub(
-            r'(?:,\s*)?(?:with\s+)?no\s+[^.]*?(?:visible|present)\.?',
-            '',
-            out,
-            flags=_re2.IGNORECASE,
-        )
-        # Also remove any inline "with no ..." fragments left mid-sentence
-        out = _re2.sub(
-            r'\bwith\s+no\s+[^.]*?(?:visible|present)\.?',
-            '',
-            out,
-            flags=_re2.IGNORECASE,
-        )
-
-        # If we removed a clause and left a dangling conjunction, trim it.
-        out = _re2.sub(r'\b(?:and|but|with|including)\s*$', '', out, flags=_re2.IGNORECASE)
-
-    # Neaten whitespace and punctuation
-    out = _re2.sub(r'\s{2,}', ' ', out).strip()
-    out = _re2.sub(r'\s+([,.!?])', r'\1', out)
-
-    return out or s
-
-async def _maybe_escalate(summary: str, smart_types: Set[str], payload: Dict[str, Any], ts_ms: int):
+async def _maybe_escalate(vr: VisionResult, payload: Dict[str, Any], ts_ms: int):
     """
     Decide if we should fire a Protect inbound trigger based on our analysis.
     Current examples: weapon hint, raccoon after-hours.
@@ -410,22 +350,23 @@ async def _maybe_escalate(summary: str, smart_types: Set[str], payload: Dict[str
     cam_id = _find_camera_id(payload) or _extract_camera_id_from_urls(payload) or (DEFAULT_CAMERA_ID or "")
     try:
         # 1) Weapon escalation
-        if TRIGGER_WEAPON:
-            w = _weapon_from_summary(summary)
-            if w and not _debounced(("weapon", cam_id)):
-                try:
-                    await fire_protect_trigger(TRIGGER_WEAPON, verify_tls=VERIFY_TLS)
-                    LOG.info("[ESCALATE] Fired WEAPON trigger (hint=%s) cam=%s", w, cam_id or "unknown")
-                except Exception as e:
-                    LOG.warning("[ESCALATE] weapon trigger failed: %s", e)
+        if TRIGGER_WEAPON and vr.weapon_detected and not _debounced(("weapon", cam_id)):
+            try:
+                await fire_protect_trigger(TRIGGER_WEAPON, verify_tls=VERIFY_TLS)
+                weapon_type = next((s.weapon_type for s in vr.subjects if s.weapon_type), "weapon")
+                LOG.info("[ESCALATE] Fired WEAPON trigger (hint=%s) cam=%s", weapon_type, cam_id or "unknown")
+            except Exception as e:
+                LOG.warning("[ESCALATE] weapon trigger failed: %s", e)
 
         # 2) Raccoon after-hours example (customize as you like)
         if TRIGGER_RACCOON:
-            sp = (_animal_from_summary(summary) or "").lower()
+            is_raccoon = any(
+                (s.species or "").lower() == "raccoon" for s in vr.subjects if s.type == "animal"
+            )
             # simple after-hours window: 21:00–06:00 local
             loc_hour = time.localtime(ts_ms / 1000).tm_hour
             after_hours = (loc_hour >= 21 or loc_hour < 6)
-            if sp == "raccoon" and after_hours and not _debounced(("raccoon", cam_id)):
+            if is_raccoon and after_hours and not _debounced(("raccoon", cam_id)):
                 try:
                     await fire_protect_trigger(TRIGGER_RACCOON, verify_tls=VERIFY_TLS)
                     LOG.info("[ESCALATE] Fired RACCOON trigger (after-hours) cam=%s", cam_id or "unknown")
@@ -434,117 +375,6 @@ async def _maybe_escalate(summary: str, smart_types: Set[str], payload: Dict[str
     except Exception as e:
         LOG.warning("[ESCALATE] unexpected error: %s", e)
 
-
-
-
-def _cleanup_summary(summary: Optional[str]) -> str:
-    s = (summary or "").strip()
-    if s.lower().startswith("alert:"):
-        s = s.split(":", 1)[1].lstrip()
-    return _suppress_absence_sentences(s)
-
-def _weapon_from_summary(summary: Optional[str]) -> Optional[str]:
-    if not summary:
-        return None
-    s = summary.lower()
-    if "no weapon" in s or "unarmed" in s: return None
-    if "shotgun" in s: return "Shotgun"
-    if any(w in s for w in ("rifle","ar-15","ak-47","carbine","long gun")): return "Rifle"
-    if any(w in s for w in ("pistol","handgun","revolver")): return "Handgun"
-    if any(w in s for w in ("gun","firearm")): return "Gun"
-    if any(w in s for w in ("knife","machete","dagger","blade","sword")): return "Knife"
-    if any(w in s for w in ("bat","club","crowbar","pipe","hammer","wrench","axe","ax","hatchet")): return "Blunt object"
-    if any(w in s for w in ("crossbow","bow")): return "Crossbow"
-    if any(w in s for w in ("taser","stun gun","pepper spray","mace")): return "Non-lethal weapon"
-    return None
-
-# ---- Label helpers (no duplicates) ----
-_VEH = ("vehicle","car","truck","suv","van","jeep","motorcycle","bike","bicycle","pickup")
-_PKG = ("package","parcel","box","delivery","ups","fedex","usps","dhl")
-_VEH_TYPES = ("suv","sedan","truck","van","jeep","motorcycle","bike","bicycle","pickup","coupe","hatchback")
-_MAKES = ("jeep","toyota","ford","chevrolet","chevy","honda","tesla","bmw","mercedes","audi",
-          "volkswagen","vw","hyundai","kia","nissan","subaru","lexus","gmc","ram","dodge","mazda","volvo","land rover","porsche")
-
-def _animal_from_summary(summary: str) -> Optional[str]:
-    s = (summary or "").lower()
-    for kw in ("raccoon","cat","dog","fox","deer","bear","coyote","squirrel","bird","opossum","skunk","donkey","horse","cow","boar","hog"):
-        if kw in s:
-            return kw.capitalize()
-    return None
-
-def _gender_from_summary(s: str) -> Optional[str]:
-    s = (s or "").lower()
-    if any(p in s for p in ("no person","no people","nobody","no one")): return None
-    if any(w in s for w in ("female","woman","girl","lady")): return "Female"
-    if any(w in s for w in ("male","man","boy","gentleman")): return "Male"
-    return None
-
-def _vehicle_type_from_summary(s: str) -> Optional[str]:
-    s = (s or "").lower()
-    if "no vehicle" in s or "no vehicles" in s:
-        return None
-    for t in _VEH_TYPES:
-        if t in s and f"no {t}" not in s:
-            # treat "bike" as bicycle unless "motorcycle" is also present
-            if t == "bike" and "motorcycle" not in s:
-                return "Bicycle"
-            return t.upper() if t == "suv" else t.capitalize()
-    return None
-
-
-def _vehicle_make_model_from_summary(s: str) -> Optional[str]:
-    s_low = (s or "").lower()
-    for make in _MAKES:
-        idx = s_low.find(make)
-        if idx != -1:
-            tail = s_low[idx+len(make):]
-            m = _re2.search(r"\s+([a-z][a-z\-]+(?:\s+[a-z][a-z\-]+)?)", tail)
-            if m:
-                guess = f"{make} {m.group(1)}".replace("  ", " ")
-            else:
-                guess = make
-            return guess.title()
-    return None
-
-def _title_detail(kind: str, summary: Optional[str]) -> str:
-    s = summary or ""
-    if kind == "Person" and TITLE_ADD_PERSON_GENDER:
-        g = _gender_from_summary(s);  return f" ({g})" if g else ""
-    if kind == "Animal" and ANIMAL_SPECIES_FROM_SUMMARY:
-        sp = _animal_from_summary(s); return f" ({sp})" if sp else ""
-    if kind == "Vehicle":
-        if TITLE_ADD_VEHICLE_MAKE_MODEL:
-            mm = _vehicle_make_model_from_summary(s)
-            if mm: return f" ({mm})"
-        if TITLE_ADD_VEHICLE_TYPE:
-            vt = _vehicle_type_from_summary(s)
-            if vt: return f" ({vt})"
-    return ""
-
-def _kind_label(types: Set[str], summary: Optional[str]) -> str:
-    if "person" in types:  return "Person"
-    if "vehicle" in types: return "Vehicle"
-    if "package" in types: return "Package"
-    if "animal" in types:
-        return _animal_from_summary(summary or "") or "Animal"
-    if SMART_DETECT_ONLY:
-        return "Alert"
-    s = (summary or "").lower().strip()
-    PERSON_POS = ("person", "someone", "visitor", "man", "woman", "individual", "child", "girl", "boy")
-    PERSON_NEG = ("no person", "no people", "nobody", "no one", "none present")
-    VEH_POS = _VEH
-    VEH_NEG = tuple("no " + w for w in _VEH) + ("no vehicle", "no vehicles")
-    PKG_POS = _PKG
-    PKG_NEG = ("no package", "no packages", "no parcel", "no delivery")
-    if any(p in s for p in PERSON_POS) and not any(n in s for n in PERSON_NEG):
-        return "Person"
-    if any(p in s for p in VEH_POS) and not any(n in s for n in VEH_NEG):
-        return "Vehicle"
-    if any(p in s for p in PKG_POS) and not any(n in s for n in PKG_NEG):
-        return "Package"
-    sp = _animal_from_summary(s)
-    if sp: return sp
-    return "Alert"
 
 # -------------------- Networking / notify --------------------
 
@@ -630,6 +460,35 @@ async def _resolve_camera_name(payload: Dict[str, Any]) -> Optional[str]:
 
 # -------------------- Webhook --------------------
 
+async def _process_and_notify(
+    img: bytes,
+    image_name: str,
+    payload: Dict[str, Any],
+    smart_types: Set[str],
+    ts_ms: int,
+    camera_name: Optional[str],
+    camera_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    vr = await analyze_image(img)
+    vr.notification_message = clean_message(vr.notification_message)
+    kind = primary_kind(smart_types, vr)
+
+    if not camera_name:
+        camera_name = await _resolve_camera_name(payload)
+    if not camera_name and camera_id and len(camera_id) == 24:
+        m = await _get_id_name_map()
+        camera_name = m.get(camera_id)
+
+    title = build_title(kind, vr, camera_name)
+    await _maybe_escalate(vr, payload, ts_ms)
+    await _notify(title=title, message=vr.notification_message, image_bytes=img, image_name=image_name)
+    return {
+        "ok": True,
+        "summary": vr.notification_message,
+        "camera": camera_name or camera_id or "unknown",
+        "ts_ms": ts_ms,
+    }
+
 @app.post("/unifi-webhook")
 async def unifi_webhook(req: Request):
     LOG.info("[WEBHOOK] hit /unifi-webhook")
@@ -672,41 +531,15 @@ async def unifi_webhook(req: Request):
     if src_kind == "data":
         img = _data_url_to_bytes(src_val)
         if img:
-            summary = await analyze_image(img)
-            summary = _cleanup_summary(summary)
-            kind = _kind_label(smart_types, summary)
-            if not camera_name:
-                camera_name = await _id_to_name(_extract_camera_id_from_urls(payload))
-
-            weapon = _weapon_from_summary(summary)
-            title_base = "Alert" if str(kind).lower() == "alert" else f"{kind} Alert"
-            if WEAPON_TITLE_HINT and weapon and kind in ("Person","Alert"):
-                title_base += f" ({weapon})"
-            title = title_base + _title_detail(kind, summary) + (f" — {camera_name}" if camera_name else "")
-            await _maybe_escalate(summary, smart_types, payload, ts_ms)
-            await _notify(title=title, message=summary, image_bytes=img, image_name="thumb.jpg")
-            return {"ok": True, "summary": summary, "camera": camera_name or "unknown", "ts_ms": ts_ms}
+            return await _process_and_notify(img, "thumb.jpg", payload, smart_types, ts_ms, camera_name)
         else:
             LOG.warning("[WEBHOOK] data:image present but could not decode; falling back")
 
     if src_kind == "url":
         img, ctype, how = await _fetch_image_url(src_val)
         if ctype.startswith("image/") and img:
-            if not camera_name:
-                camera_name = await _id_to_name(_extract_camera_id_from_urls(payload))
             LOG.info(f"[WEBHOOK] using thumbnail ({ctype}, auth={how}, bytes={len(img)})")
-            summary = await analyze_image(img)
-            summary = _cleanup_summary(summary)
-            kind = _kind_label(smart_types, summary)
-
-            weapon = _weapon_from_summary(summary)
-            title_base = "Alert" if str(kind).lower() == "alert" else f"{kind} Alert"
-            if WEAPON_TITLE_HINT and weapon and kind in ("Person","Alert"):
-                title_base += f" ({weapon})"
-            title = title_base + _title_detail(kind, summary) + (f" — {camera_name}" if camera_name else "")
-            await _maybe_escalate(summary, smart_types, payload, ts_ms)
-            await _notify(title=title, message=summary, image_bytes=img, image_name="thumb.jpg")
-            return {"ok": True, "summary": summary, "camera": camera_name or "unknown", "ts_ms": ts_ms}
+            return await _process_and_notify(img, "thumb.jpg", payload, smart_types, ts_ms, camera_name)
         else:
             LOG.warning(f"[WEBHOOK] thumbnail not usable (ctype={ctype}); will try snapshot")
 
@@ -717,20 +550,6 @@ async def unifi_webhook(req: Request):
         raise HTTPException(status_code=400, detail="No camera id found in webhook payload")
 
     jpeg = await get_snapshot_by_ts(camera_id=camera_id, ts_ms=ts_ms, verify_tls=VERIFY_TLS)
-    summary = await analyze_image(jpeg)
-    summary = _cleanup_summary(summary)
-
-    kind = _kind_label(smart_types, summary)
-    if not camera_name and len(camera_id) == 24:
-        m = await _get_id_name_map()
-        camera_name = m.get(camera_id)
-
-    weapon = _weapon_from_summary(summary)
-    title_base = "Alert" if str(kind).lower() == "alert" else f"{kind} Alert"
-    if WEAPON_TITLE_HINT and weapon and kind in ("Person","Alert"):
-        title_base += f" ({weapon})"
-    title = title_base + _title_detail(kind, summary) + (f" — {camera_name}" if camera_name else "")
-    await _maybe_escalate(summary, smart_types, payload, ts_ms)
-    await _notify(title=title, message=summary, image_bytes=jpeg, image_name="snapshot.jpg")
-
-    return {"ok": True, "summary": summary, "camera": camera_name or camera_id, "ts_ms": ts_ms}
+    return await _process_and_notify(
+        jpeg, "snapshot.jpg", payload, smart_types, ts_ms, camera_name, camera_id=camera_id
+    )
