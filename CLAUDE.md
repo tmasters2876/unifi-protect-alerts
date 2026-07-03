@@ -102,6 +102,7 @@ The Dockerfile now matches this flat-file layout (`uvicorn main:app`, `COPY . .`
 | `TITLE_ADD_VEHICLE_TYPE` | Optional | `true` (default) — add vehicle type to alert title |
 | `TITLE_ADD_VEHICLE_MAKE_MODEL` | Optional | `false` (default) — add make/model if detected |
 | `WEAPON_TITLE_HINT` | Optional | `true` (default) — add weapon type to title if detected |
+| `WEAPON_TYPE_HINTS` | Optional | Comma-separated reference vocabulary for weapon types (default covers common categories: AR/AK-style rifle, shotgun, handgun, revolver, hunting rifle, knife, machete, blunt object, crossbow). Grounds the model's terminology when a weapon is genuinely visible — the prompt explicitly instructs it to only use these terms on clear visual evidence, never to assume one is present. |
 | `PROTECT_TRIGGER_WEAPON` | Optional | Protect Alarm Manager trigger URL to fire on weapon detection |
 | `PROTECT_TRIGGER_RACCOON` | Optional | Protect trigger URL to fire on after-hours raccoon detection |
 | `ESCALATION_DEBOUNCE_SEC` | Optional | Seconds between repeated Protect trigger fires (default 60) |

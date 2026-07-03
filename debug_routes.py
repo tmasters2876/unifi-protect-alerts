@@ -17,6 +17,7 @@ from labeling import (
 )
 from payload import absolute_url, extract_camera_id_from_urls, find_camera_id, list_image_urls
 from unifi import get_camera_map, get_id_name_map, get_snapshot_by_ts, id_to_name
+from vision import WEAPON_TYPE_HINTS
 from webhook import _fetch_image_url
 
 router = APIRouter()
@@ -43,6 +44,7 @@ async def debug_env():
         "TITLE_ADD_VEHICLE_TYPE": TITLE_ADD_VEHICLE_TYPE,
         "TITLE_ADD_VEHICLE_MAKE_MODEL": TITLE_ADD_VEHICLE_MAKE_MODEL,
         "WEAPON_TITLE_HINT": WEAPON_TITLE_HINT,
+        "WEAPON_TYPE_HINTS": WEAPON_TYPE_HINTS,
     }
 
 

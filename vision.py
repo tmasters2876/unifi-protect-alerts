@@ -10,6 +10,11 @@ from retry import retry_async
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MODEL = "gpt-4o"
+WEAPON_TYPE_HINTS = os.environ.get(
+    "WEAPON_TYPE_HINTS",
+    "AR-15/AK-47 style rifle, shotgun, handgun/pistol, revolver, hunting rifle, "
+    "knife, machete, baseball bat/blunt object, crossbow",
+)
 
 _client: Optional[httpx.AsyncClient] = None
 
@@ -42,13 +47,19 @@ PROMPT = (
     "driveway') — counts, colors, and notable actions matter for animals and vehicles just as much "
     "as for people, not just an identity label.\n"
     "For each person: note apparent gender, approximate age range, clothing, and anything carried. "
-    "Call out weapons early and specifically (e.g. 'AR-type rifle', 'handgun', 'knife'); if unsure "
-    "whether an object is a weapon, say 'unclear object' and set weapon_confidence accordingly. "
+    "Call out weapons early — see WEAPON VOCABULARY below for how to name the type. "
     "Do not guess ethnicity or gender if not clearly evident — use 'unknown' rather than speculate.\n"
     "For animals: name the species if identifiable, note coloring/markings and count if more than one, "
     "and describe what it's doing (grazing, foraging, running, staring at the camera, etc.).\n"
     "For vehicles: type, color, and make/model only if confidently legible, plus any notable action "
     "(parking, idling, pulling away).\n"
+    "WEAPON VOCABULARY: when a weapon-like object is genuinely visible, be as specific as possible "
+    f"using terms like: {WEAPON_TYPE_HINTS}. Only use one of these terms when the visible object "
+    "actually matches it — never assume a weapon from this list is present without clear visual "
+    "evidence. If something looks weapon-like but doesn't clearly match any of these categories, "
+    "describe it in plain terms instead (e.g. 'unidentified bladed object', 'homemade or improvised "
+    "weapon'). If unsure whether an object is a weapon at all, say 'unclear object' and set "
+    "weapon_confidence to low or none rather than guessing a specific type.\n"
     "Avoid 'left/right'; use 'toward/away from camera' or 'toward the door/yard' only if obvious.\n"
     "Compose `notification_message` as 1-2 natural, descriptive sentences that read like a witness "
     "description, combining ALL subjects together and carrying over the color/action detail above — "

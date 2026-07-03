@@ -19,6 +19,11 @@ def _reset_client():
     vision._client = None
 
 
+def test_prompt_includes_weapon_type_hints_with_guardrail():
+    assert vision.WEAPON_TYPE_HINTS in vision.PROMPT
+    assert "only" in vision.PROMPT.lower() and "clear visual evidence" in vision.PROMPT.lower()
+
+
 @respx.mock
 async def test_analyze_image_parses_structured_response(multi_subject_vision_json):
     respx.post(OPENAI_URL).mock(
