@@ -17,3 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff>=0.5"]
+
+[tool.setuptools]
+py-modules = [
+  "main", "config", "payload", "debounce", "escalation", "webhook",
+  "debug_routes", "labeling", "vision", "notify", "unifi",
+]

@@ -1,8 +1,13 @@
 # unifi.py — Integration API first, classic API fallback, with camera-id resolver
 
-import os, time, re
-from typing import Dict, Any
+import logging, os, time, re
+from typing import Any, Dict, Optional
 import httpx
+
+from payload import extract_camera_id_from_urls, find_camera_id, find_camera_name_in_payload
+
+LOG = logging.getLogger("uvicorn.error")
+
 
 class UnifiAuthError(Exception):
     pass
@@ -151,6 +156,54 @@ async def resolve_camera_identifier(identifier: str, verify_tls: bool = True) ->
 async def get_camera_map(verify_tls: bool = True) -> Dict[str, str]:
     await _refresh_camera_map(verify_tls)
     return dict(_CAM_CACHE["map"])
+
+# ---------------- ID → Name cache (Integration API) ----------------
+_ID_NAME_CACHE = {"ts": 0.0, "map": {}}
+
+
+async def get_id_name_map(verify_tls: bool = True) -> Dict[str, str]:
+    now = time.time()
+    if _ID_NAME_CACHE["map"] and (now - _ID_NAME_CACHE["ts"] < 60):
+        return _ID_NAME_CACHE["map"]
+    host = (os.environ.get("PROTECT_HOST") or "").rstrip("/")
+    ikey = os.environ.get("PROTECT_INTEGRATION_KEY") or ""
+    mapping: Dict[str, str] = {}
+    if not (host and ikey):
+        _ID_NAME_CACHE["map"] = mapping
+        _ID_NAME_CACHE["ts"] = now
+        return mapping
+    async with httpx.AsyncClient(verify=verify_tls, timeout=20, follow_redirects=True) as cx:
+        try:
+            r = await cx.get(f"{host}/proxy/protect/integration/v1/cameras",
+                             headers={"X-API-KEY": ikey})
+            if r.status_code == 200:
+                for cam in r.json():
+                    cid = cam.get("id")
+                    nm = (cam.get("name") or cam.get("displayName") or cam.get("channelName") or "").strip()
+                    if cid and nm:
+                        mapping[cid] = nm
+        except Exception as e:
+            LOG.warning(f"[ID→NAME] fetch failed: {e}")
+    _ID_NAME_CACHE["map"] = mapping
+    _ID_NAME_CACHE["ts"] = now
+    return mapping
+
+
+async def id_to_name(cid: Optional[str], verify_tls: bool = True) -> Optional[str]:
+    if isinstance(cid, str) and len(cid) == 24:
+        m = await get_id_name_map(verify_tls=verify_tls)
+        return m.get(cid)
+    return None
+
+
+async def resolve_camera_name(payload: Dict[str, Any], verify_tls: bool = True) -> Optional[str]:
+    nm = find_camera_name_in_payload(payload)
+    if nm:
+        return nm
+    cid = find_camera_id(payload)
+    if not (isinstance(cid, str) and len(cid) == 24):
+        cid = extract_camera_id_from_urls(payload)
+    return await id_to_name(cid, verify_tls=verify_tls)
 
 # ---------------- Snapshot helpers ----------------
 async def get_snapshot_by_ts(camera_id: str, ts_ms: int, verify_tls: bool = True) -> bytes:
