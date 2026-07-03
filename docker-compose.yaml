@@ -15,7 +15,7 @@ services:
     environment:
       - TZ=America/Chicago
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"] 
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2)"]
       interval: 30s
       timeout: 3s
       retries: 5
