@@ -28,12 +28,18 @@ FastAPI webhook server that receives UniFi Protect alarm events, fetches a camer
 
 ```
 unifi-protect-alerts/
-├── main.py              # FastAPI app, webhook route, payload-parsing helpers, notify glue
+├── main.py              # FastAPI() app + log-file wiring + router registration only
+├── config.py            # Shared env-var constants (VERIFY_TLS, PROTECT_HOST, trigger URLs, ...)
+├── payload.py           # UniFi webhook payload parsing (camera id/name, timestamp, image candidates)
 ├── labeling.py          # Turns a structured VisionResult into an alert title (no regex)
-├── unifi.py             # UniFi Protect API client (Integration + Classic)
+├── debounce.py          # Generic per-key/window Debouncer class
+├── escalation.py        # maybe_escalate() — fires Protect Alarm Manager triggers (weapon/raccoon)
+├── webhook.py           # POST /unifi-webhook route + image fetch + _process_and_notify()
+├── debug_routes.py      # /health + all /debug/* diagnostic routes
+├── unifi.py             # UniFi Protect API client (Integration + Classic), camera/id-name caches
 ├── vision.py            # OpenAI Vision wrapper — Subject/VisionResult schema, gpt-4o structured output
 ├── notify.py            # Pushover notification sender
-├── pyproject.toml       # Dependencies and build config
+├── pyproject.toml       # Dependencies + explicit py-modules (flat layout; see note below)
 ├── Dockerfile           # python:3.11-slim, installs package, runs uvicorn (flat-file layout)
 ├── .dockerignore        # Excludes venvs, Archive/, scripts/, tests/, .env from the image
 ├── docker-compose.yaml  # Synology NAS deployment (port 18080→8080), mounts ./logs
@@ -46,6 +52,8 @@ unifi-protect-alerts/
 ├── logs/                # RotatingFileHandler output (gitignored, mounted on NAS)
 └── .env                 # Local secrets (never commit)
 ```
+
+`pyproject.toml` declares `[tool.setuptools] py-modules = [...]` explicitly — without it, setuptools' flat-layout auto-discovery treats `Archive/`/`logs/`/`scripts/` as candidate top-level packages and `pip install -e .` fails once `logs/` exists on disk (it's created at runtime). Add any new top-level `.py` module to that list too.
 
 ---
 
