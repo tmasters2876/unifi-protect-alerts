@@ -7,6 +7,7 @@ from vision import Subject, VisionResult
 SMART_DETECT_ONLY = os.environ.get("SMART_DETECT_ONLY", "false").strip().lower() in ("1", "true", "yes", "y")
 ANIMAL_SPECIES_FROM_SUMMARY = os.environ.get("ANIMAL_SPECIES_FROM_SUMMARY", "true").strip().lower() in ("1", "true", "yes", "y")
 TITLE_ADD_PERSON_GENDER = os.environ.get("TITLE_ADD_PERSON_GENDER", "true").strip().lower() in ("1", "true", "yes", "y")
+TITLE_ADD_PERSON_ETHNICITY = os.environ.get("TITLE_ADD_PERSON_ETHNICITY", "true").strip().lower() in ("1", "true", "yes", "y")
 TITLE_ADD_VEHICLE_TYPE = os.environ.get("TITLE_ADD_VEHICLE_TYPE", "true").strip().lower() in ("1", "true", "yes", "y")
 TITLE_ADD_VEHICLE_MAKE_MODEL = os.environ.get("TITLE_ADD_VEHICLE_MAKE_MODEL", "false").strip().lower() in ("1", "true", "yes", "y")
 WEAPON_TITLE_HINT = os.environ.get("WEAPON_TITLE_HINT", "true").strip().lower() in ("1", "true", "yes", "y")
@@ -45,10 +46,13 @@ def build_title(kind: str, vr: VisionResult, camera_name: Optional[str]) -> str:
         weapon_type = next((s.weapon_type for s in vr.subjects if s.weapon_type), None)
         title_base += f" ({weapon_type})" if weapon_type else " (Weapon)"
 
-    if kind == "person" and TITLE_ADD_PERSON_GENDER:
+    if kind == "person":
         person = _first_subject_of(vr, "person")
-        if person and person.apparent_gender and person.apparent_gender != "unknown":
-            title_base += f" ({person.apparent_gender.capitalize()})"
+        if person:
+            if TITLE_ADD_PERSON_ETHNICITY and person.apparent_ethnicity and person.apparent_ethnicity.lower() != "unknown":
+                title_base += f" ({person.apparent_ethnicity.capitalize()})"
+            if TITLE_ADD_PERSON_GENDER and person.apparent_gender and person.apparent_gender != "unknown":
+                title_base += f" ({person.apparent_gender.capitalize()})"
 
     if kind == "animal" and ANIMAL_SPECIES_FROM_SUMMARY:
         animal = _first_subject_of(vr, "animal")

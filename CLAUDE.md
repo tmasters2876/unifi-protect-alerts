@@ -98,6 +98,7 @@ The Dockerfile now matches this flat-file layout (`uvicorn main:app`, `COPY . .`
 | `SMART_DETECT_ONLY` | Optional | `true` = only use UniFi smart-detect types, skip AI label inference |
 | `ANIMAL_SPECIES_FROM_SUMMARY` | Optional | `true` (default) — add species to animal alert title |
 | `TITLE_ADD_PERSON_GENDER` | Optional | `true` (default) — add inferred gender to person alert title |
+| `TITLE_ADD_PERSON_ETHNICITY` | Optional | `true` (default) — add apparent ethnicity to person alert title, e.g. "Person Alert (Asian) (Male)" |
 | `TITLE_ADD_VEHICLE_TYPE` | Optional | `true` (default) — add vehicle type to alert title |
 | `TITLE_ADD_VEHICLE_MAKE_MODEL` | Optional | `false` (default) — add make/model if detected |
 | `WEAPON_TITLE_HINT` | Optional | `true` (default) — add weapon type to title if detected |

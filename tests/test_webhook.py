@@ -22,6 +22,7 @@ def _isolate_module_state(monkeypatch):
     monkeypatch.setattr(labeling, "SMART_DETECT_ONLY", False)
     monkeypatch.setattr(labeling, "ANIMAL_SPECIES_FROM_SUMMARY", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_PERSON_GENDER", True)
+    monkeypatch.setattr(labeling, "TITLE_ADD_PERSON_ETHNICITY", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_VEHICLE_TYPE", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_VEHICLE_MAKE_MODEL", False)
     monkeypatch.setattr(labeling, "WEAPON_TITLE_HINT", True)
@@ -77,7 +78,7 @@ def test_webhook_multi_subject_alert_end_to_end(monkeypatch, data_url_payload, m
     body = r.json()
     assert body["ok"] is True
     assert "raccoon" in body["summary"]
-    assert sent["title"] == "Person Alert (AR-type rifle) (Male) — Front Door"
+    assert sent["title"] == "Person Alert (AR-type rifle) (Asian) (Male) — Front Door"
     assert "Asian male" in sent["message"]
     assert "raccoon" in sent["message"]
 

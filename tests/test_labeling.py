@@ -11,6 +11,7 @@ def _pin_labeling_flags(monkeypatch):
     monkeypatch.setattr(labeling, "SMART_DETECT_ONLY", False)
     monkeypatch.setattr(labeling, "ANIMAL_SPECIES_FROM_SUMMARY", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_PERSON_GENDER", True)
+    monkeypatch.setattr(labeling, "TITLE_ADD_PERSON_ETHNICITY", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_VEHICLE_TYPE", True)
     monkeypatch.setattr(labeling, "TITLE_ADD_VEHICLE_MAKE_MODEL", False)
     monkeypatch.setattr(labeling, "WEAPON_TITLE_HINT", True)
@@ -52,6 +53,34 @@ def test_build_title_single_person_with_weapon():
     )
     title = labeling.build_title("person", vr, "Front Door")
     assert title == "Person Alert (Handgun) (Male) — Front Door"
+
+
+def test_build_title_person_with_ethnicity_and_gender():
+    vr = _vr(
+        subjects=[Subject(type="person", description="a man", apparent_gender="male",
+                           apparent_ethnicity="Asian")],
+    )
+    title = labeling.build_title("person", vr, "Front Door")
+    assert title == "Person Alert (Asian) (Male) — Front Door"
+
+
+def test_build_title_omits_ethnicity_when_unknown():
+    vr = _vr(
+        subjects=[Subject(type="person", description="a person", apparent_gender="unknown",
+                           apparent_ethnicity="unknown")],
+    )
+    title = labeling.build_title("person", vr, "Front Door")
+    assert title == "Person Alert — Front Door"
+
+
+def test_build_title_ethnicity_hidden_when_flag_disabled(monkeypatch):
+    monkeypatch.setattr(labeling, "TITLE_ADD_PERSON_ETHNICITY", False)
+    vr = _vr(
+        subjects=[Subject(type="person", description="a man", apparent_gender="male",
+                           apparent_ethnicity="Asian")],
+    )
+    title = labeling.build_title("person", vr, "Front Door")
+    assert title == "Person Alert (Male) — Front Door"
 
 
 def test_build_title_multi_subject_person_and_animal():
