@@ -1,11 +1,13 @@
 # webhook.py — POST /unifi-webhook: fetch image, run vision analysis, build alert, notify
 import logging
+import os
 from typing import Any, Dict, Optional, Set
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from config import BTOKEN, DEFAULT_CAMERA_ID, IKEY, SHARED_SECRET, VERIFY_TLS
+from debounce import Debouncer
 from escalation import maybe_escalate
 from labeling import build_title, clean_message, primary_kind
 from payload import (
@@ -26,33 +28,55 @@ LOG = logging.getLogger("uvicorn.error")
 
 router = APIRouter()
 
+# Throttles the full GPT+Pushover cycle per camera; UniFi commonly fires several
+# webhook events for one motion/detection window. This is separate from
+# escalation.py's debounce, which only throttles Protect trigger firing.
+NOTIFY_DEBOUNCE_SEC = int(os.environ.get("NOTIFY_DEBOUNCE_SEC", "20"))
+_notify_debouncer = Debouncer()
+
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(verify=VERIFY_TLS, timeout=20, follow_redirects=True)
+    return _client
+
+
+async def aclose_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
 
 async def _fetch_image_url(u: str):
     url = absolute_url(u)
     tried = []
     ctype = ""
     last_content = b""
-    async with httpx.AsyncClient(verify=VERIFY_TLS, timeout=20, follow_redirects=True) as cx:
+    cx = _get_client()
+    try:
+        r = await cx.get(url); ctype = r.headers.get("content-type","").lower()
+        if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "none"
+        tried.append(f"none:{r.status_code}:{ctype}"); last_content = r.content
+    except Exception as e:
+        tried.append(f"none:EXC:{e!r}")
+    if IKEY:
         try:
-            r = await cx.get(url); ctype = r.headers.get("content-type","").lower()
-            if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "none"
-            tried.append(f"none:{r.status_code}:{ctype}"); last_content = r.content
+            r = await cx.get(url, headers={"X-API-KEY": IKEY}); ctype = r.headers.get("content-type","").lower()
+            if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "x-api-key"
+            tried.append(f"x-api-key:{r.status_code}:{ctype}"); last_content = r.content
         except Exception as e:
-            tried.append(f"none:EXC:{e!r}")
-        if IKEY:
-            try:
-                r = await cx.get(url, headers={"X-API-KEY": IKEY}); ctype = r.headers.get("content-type","").lower()
-                if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "x-api-key"
-                tried.append(f"x-api-key:{r.status_code}:{ctype}"); last_content = r.content
-            except Exception as e:
-                tried.append(f"x-api-key:EXC:{e!r}")
-        if BTOKEN:
-            try:
-                r = await cx.get(url, headers={"Authorization": f"Bearer {BTOKEN}"}); ctype = r.headers.get("content-type","").lower()
-                if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "bearer"
-                tried.append(f"bearer:{r.status_code}:{ctype}"); last_content = r.content
-            except Exception as e:
-                tried.append(f"bearer:EXC:{e!r}")
+            tried.append(f"x-api-key:EXC:{e!r}")
+    if BTOKEN:
+        try:
+            r = await cx.get(url, headers={"Authorization": f"Bearer {BTOKEN}"}); ctype = r.headers.get("content-type","").lower()
+            if r.status_code == 200 and ctype.startswith("image/"): return r.content, ctype, "bearer"
+            tried.append(f"bearer:{r.status_code}:{ctype}"); last_content = r.content
+        except Exception as e:
+            tried.append(f"bearer:EXC:{e!r}")
     LOG.warning(f"[FETCH_IMAGE] not image or unauthorized; tried={tried} url={url}")
     return last_content, ctype, "failed"
 
@@ -81,6 +105,14 @@ async def _process_and_notify(
     camera_name: Optional[str],
     camera_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    debounce_key = (
+        find_camera_id(payload) or extract_camera_id_from_urls(payload)
+        or camera_id or camera_name or "unknown"
+    )
+    if _notify_debouncer.is_debounced(("notify", debounce_key), NOTIFY_DEBOUNCE_SEC):
+        LOG.info("[NOTIFY] debounced cam=%s", debounce_key)
+        return {"ok": True, "debounced": True}
+
     vr = await analyze_image(img)
     vr.notification_message = clean_message(vr.notification_message)
     kind = primary_kind(smart_types, vr)

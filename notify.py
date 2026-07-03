@@ -1,9 +1,27 @@
 # notify.py — Pushover with optional image attachment
 import os
+from typing import Optional
 import httpx
 
 PUSHOVER_USER_KEY = os.getenv("PUSHOVER_USER_KEY")
 PUSHOVER_APP_TOKEN = os.getenv("PUSHOVER_APP_TOKEN")
+
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=20)
+    return _client
+
+
+async def aclose_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
 
 def notify_available() -> bool:
     return bool(PUSHOVER_USER_KEY and PUSHOVER_APP_TOKEN)
@@ -26,7 +44,7 @@ async def send_alert(title: str, message: str, image_bytes: bytes | None = None,
         # Default to jpeg content-type; Pushover will sniff.
         files = {"attachment": (image_name, image_bytes, "image/jpeg")}
 
-    async with httpx.AsyncClient(timeout=20) as cx:
-        r = await cx.post("https://api.pushover.net/1/messages.json", data=data, files=files)
-        r.raise_for_status()
-        # optional: return r.json()
+    cx = _get_client()
+    r = await cx.post("https://api.pushover.net/1/messages.json", data=data, files=files)
+    r.raise_for_status()
+    # optional: return r.json()

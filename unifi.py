@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from payload import extract_camera_id_from_urls, find_camera_id, find_camera_name_in_payload
+from retry import retry_async
 
 LOG = logging.getLogger("uvicorn.error")
 
@@ -22,13 +23,36 @@ def _env():
         raise UnifiAuthError("Provide PROTECT_INTEGRATION_KEY (preferred) or PROTECT_API_KEY.")
     return host, ikey, btoken
 
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client(verify_tls: bool) -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(verify=verify_tls, timeout=20, follow_redirects=True)
+    return _client
+
+
+async def aclose_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
 async def _http_get(url: str, headers: dict, params: dict, verify_tls: bool) -> httpx.Response:
-    async with httpx.AsyncClient(verify=verify_tls, timeout=20, follow_redirects=True) as client:
-        return await client.get(url, headers=headers, params=params)
+    client = _get_client(verify_tls)
+    return await retry_async(
+        lambda: client.get(url, headers=headers, params=params),
+        attempts=2, base_delay=1.0, retry_on=(httpx.TransportError,),
+    )
 
 async def _http_post(url: str, headers: dict, data: bytes | None, verify_tls: bool) -> httpx.Response:
-    async with httpx.AsyncClient(verify=verify_tls, timeout=20, follow_redirects=True) as client:
-        return await client.post(url, headers=headers, content=data or b"")
+    client = _get_client(verify_tls)
+    return await retry_async(
+        lambda: client.post(url, headers=headers, content=data or b""),
+        attempts=2, base_delay=1.0, retry_on=(httpx.TransportError,),
+    )
 
 # ---------------- Camera resolver (maps MAC/device → Integration id) ----------------
 _CAM_CACHE = {"ts": 0.0, "map": {}}  # 30s cache
@@ -172,18 +196,17 @@ async def get_id_name_map(verify_tls: bool = True) -> Dict[str, str]:
         _ID_NAME_CACHE["map"] = mapping
         _ID_NAME_CACHE["ts"] = now
         return mapping
-    async with httpx.AsyncClient(verify=verify_tls, timeout=20, follow_redirects=True) as cx:
-        try:
-            r = await cx.get(f"{host}/proxy/protect/integration/v1/cameras",
-                             headers={"X-API-KEY": ikey})
-            if r.status_code == 200:
-                for cam in r.json():
-                    cid = cam.get("id")
-                    nm = (cam.get("name") or cam.get("displayName") or cam.get("channelName") or "").strip()
-                    if cid and nm:
-                        mapping[cid] = nm
-        except Exception as e:
-            LOG.warning(f"[ID→NAME] fetch failed: {e}")
+    try:
+        r = await _http_get(f"{host}/proxy/protect/integration/v1/cameras",
+                             {"X-API-KEY": ikey}, {}, verify_tls)
+        if r.status_code == 200:
+            for cam in r.json():
+                cid = cam.get("id")
+                nm = (cam.get("name") or cam.get("displayName") or cam.get("channelName") or "").strip()
+                if cid and nm:
+                    mapping[cid] = nm
+    except Exception as e:
+        LOG.warning(f"[ID→NAME] fetch failed: {e}")
     _ID_NAME_CACHE["map"] = mapping
     _ID_NAME_CACHE["ts"] = now
     return mapping

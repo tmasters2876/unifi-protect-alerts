@@ -103,7 +103,8 @@ The Dockerfile now matches this flat-file layout (`uvicorn main:app`, `COPY . .`
 | `WEAPON_TITLE_HINT` | Optional | `true` (default) — add weapon type to title if detected |
 | `PROTECT_TRIGGER_WEAPON` | Optional | Protect Alarm Manager trigger URL to fire on weapon detection |
 | `PROTECT_TRIGGER_RACCOON` | Optional | Protect trigger URL to fire on after-hours raccoon detection |
-| `ESCALATION_DEBOUNCE_SEC` | Optional | Seconds between repeated trigger fires (default 60) |
+| `ESCALATION_DEBOUNCE_SEC` | Optional | Seconds between repeated Protect trigger fires (default 60) |
+| `NOTIFY_DEBOUNCE_SEC` | Optional | Seconds to suppress a repeat GPT+Pushover cycle for the same camera (default 20) |
 
 ---
 
@@ -144,6 +145,9 @@ docker run --env-file .env -p 8080:8080 unifi-ai-alerts
 - **Label logic**: UniFi `smartDetectTypes` take priority over AI inference (`labeling.primary_kind`); `SMART_DETECT_ONLY=true` returns `"none"` (generic "Alert" title) when no UniFi smart type matched, skipping the AI's own `primary_subject_type` guess
 - **Multi-subject alerts**: the model returns one `Subject` per person/animal/vehicle/package in frame; `notification_message` is composed by the model itself as one combined sentence (e.g. "An Asian male and a raccoon are at the front door...") — `main.py` doesn't stitch subjects together
 - **Escalation triggers**: `fire_protect_trigger()` POSTs to a Protect Alarm Manager "Trigger Link" URL with debounce; weapon/raccoon checks key off `VisionResult.weapon_detected`/`Subject.species` directly
+- **Two independent debounces**: `escalation.py`'s (`ESCALATION_DEBOUNCE_SEC`) only throttles Protect trigger firing; `webhook.py`'s notify-level one (`NOTIFY_DEBOUNCE_SEC`) throttles the entire GPT+Pushover cycle per camera, since UniFi commonly fires several webhook events per motion window
+- **Shared httpx clients**: `unifi.py`/`vision.py`/`notify.py`/`webhook.py` each lazily create one module-level `httpx.AsyncClient` instead of one per call, closed via `main.py`'s FastAPI `lifespan` on shutdown
+- **Retry on transient errors only**: `retry.py`'s `retry_async()` wraps the OpenAI call (`vision.py`) and Protect GET/POST calls (`unifi.py`), retrying once on transport errors/429/5xx — never on 4xx (those are real auth/schema errors, not blips)
 - **`Archive/`**: historical versions of `main.py` — not imported, safe to ignore
 - All modules are flat files (no package structure) — import as `from unifi import ...`
 - The `ruff` linter is available as a dev dep: `ruff check .` / `ruff format .`

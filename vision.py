@@ -6,8 +6,30 @@ from typing import List, Literal, Optional
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from retry import retry_async
+
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MODEL = "gpt-4o"
+
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=30)
+    return _client
+
+
+async def aclose_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
+class _RetryableVisionError(Exception):
+    pass
 
 PROMPT = (
     "You are a strict home-security analyst describing a camera image for a property owner's "
@@ -123,7 +145,7 @@ RESPONSE_FORMAT = {
 }
 
 
-async def _call_openai(jpeg_bytes: bytes) -> dict:
+async def _call_openai_once(jpeg_bytes: bytes) -> dict:
     b64 = base64.b64encode(jpeg_bytes).decode()
     image_url = f"data:image/jpeg;base64,{b64}"
 
@@ -140,7 +162,8 @@ async def _call_openai(jpeg_bytes: bytes) -> dict:
         "response_format": RESPONSE_FORMAT,
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    client = _get_client()
+    try:
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
             headers={
@@ -149,6 +172,11 @@ async def _call_openai(jpeg_bytes: bytes) -> dict:
             },
             json=body,
         )
+    except httpx.TransportError as e:
+        raise _RetryableVisionError(f"transport error: {e}") from e
+
+    if r.status_code == 429 or r.status_code >= 500:
+        raise _RetryableVisionError(f"OpenAI error {r.status_code}: {r.text[:300]}")
 
     if r.status_code >= 400:
         try:
@@ -158,6 +186,15 @@ async def _call_openai(jpeg_bytes: bytes) -> dict:
         raise RuntimeError(f"OpenAI error {r.status_code}: {err}")
 
     return r.json()
+
+
+async def _call_openai(jpeg_bytes: bytes) -> dict:
+    return await retry_async(
+        lambda: _call_openai_once(jpeg_bytes),
+        attempts=2,
+        base_delay=1.0,
+        retry_on=(_RetryableVisionError,),
+    )
 
 
 async def analyze_image(jpeg_bytes: bytes) -> VisionResult:
@@ -170,7 +207,7 @@ async def analyze_image(jpeg_bytes: bytes) -> VisionResult:
         return VisionResult.model_validate_json(content)
     except httpx.HTTPError as e:
         return _empty_result(f"Vision analysis failed: {e}")
-    except RuntimeError as e:
+    except (RuntimeError, _RetryableVisionError) as e:
         return _empty_result(f"Vision analysis failed: {e}")
     except (ValidationError, KeyError, IndexError) as e:
         return _empty_result(f"Vision analysis returned an unexpected response: {e}")
