@@ -16,10 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.5"]
+dev = ["ruff>=0.5", "pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21"]
 
 [tool.setuptools]
 py-modules = [
   "main", "config", "payload", "debounce", "escalation", "webhook",
   "debug_routes", "labeling", "vision", "notify", "unifi", "retry",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

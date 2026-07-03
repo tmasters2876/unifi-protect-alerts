@@ -1,0 +1,10 @@
+{
+  "timestamp": 1735689600000,
+  "cameraName": "Front Door",
+  "alarm": {
+    "name": "Front Door Motion",
+    "triggers": [{"device": "abcdef0123456789abcdef01", "key": "personMotion"}],
+    "smartDetectTypes": ["person", "animal"]
+  },
+  "thumbnail": "data:image/jpeg;base64,Zm9vYmFy"
+}

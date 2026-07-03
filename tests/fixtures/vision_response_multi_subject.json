@@ -1,0 +1,42 @@
+{
+  "subjects": [
+    {
+      "type": "person",
+      "description": "Asian male in blue polo shirt",
+      "apparent_gender": "male",
+      "apparent_age_range": "adult",
+      "apparent_ethnicity": "Asian",
+      "clothing": "blue polo shirt",
+      "carrying_item": null,
+      "weapon_type": "AR-type rifle",
+      "weapon_confidence": "high",
+      "species": null,
+      "animal_count": null,
+      "vehicle_type": null,
+      "vehicle_color": null,
+      "vehicle_make_model": null,
+      "position_or_action": "standing at front door"
+    },
+    {
+      "type": "animal",
+      "description": "raccoon near the door",
+      "apparent_gender": null,
+      "apparent_age_range": null,
+      "apparent_ethnicity": null,
+      "clothing": null,
+      "carrying_item": null,
+      "weapon_type": null,
+      "weapon_confidence": null,
+      "species": "raccoon",
+      "animal_count": 1,
+      "vehicle_type": null,
+      "vehicle_color": null,
+      "vehicle_make_model": null,
+      "position_or_action": "near the door"
+    }
+  ],
+  "notification_message": "An Asian male and a raccoon are at the front door. The Asian male is wearing a blue shirt (polo style) and is carrying an AR-type weapon.",
+  "weapon_detected": true,
+  "threat_level": "high",
+  "primary_subject_type": "person"
+}

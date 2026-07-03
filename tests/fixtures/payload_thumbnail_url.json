@@ -1,0 +1,9 @@
+{
+  "timestamp": 1735689600000,
+  "alarm": {
+    "name": "Front Door Motion",
+    "triggers": [{"device": "abcdef0123456789abcdef01"}],
+    "smartDetectTypes": ["vehicle"]
+  },
+  "thumbnailUrl": "https://192.168.1.10/proxy/protect/thumbnail?cameraId=abcdef0123456789abcdef01"
+}
